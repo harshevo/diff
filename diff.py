@@ -1,5 +1,7 @@
 import sys
 import re
+from typing import TypeVar, List, Sequence, Tuple, Optional
+from typing_extensions import Literal
 
 trace = False
 if trace:
@@ -24,6 +26,10 @@ def read_file(filepath):
 
     return lines
 
+IGNORE = 'I'
+REMOVE = 'R'
+ADD = 'A'
+
 def lev_distance(line1, line2):
     cache = []
     action = []
@@ -31,9 +37,6 @@ def lev_distance(line1, line2):
     l1 = len(line1) #length of line1
     l2 = len(line2) #length of line2
 
-    IGNORE = 'I'
-    REMOVE = 'R'
-    ADD = 'A'
 
     for _ in range(l1 + 1):
         cache.append([0] * (l2 + 1))
@@ -124,12 +127,10 @@ class DiffSubcommand(Subcommand):
         patch_file_name = f1
 
         with open(f'{patch_file_name}.patch', 'w') as f:
-            for line in patch:
-                f.write(line)
-                f.write('\n')
-
-        for action, line_no, line in patch:
-            print(f"{action} {line_no} ({line})")
+            for action, line_no, line in patch:
+                print(f"{action} {line_no} {line}")
+                f.write(f"{action} {line_no} {line}")
+                f.write("\n")
 
         return 0 
 
@@ -138,15 +139,19 @@ class PatchSubcommand(Subcommand):
         super().__init__("patch", "<file> <patch_file.patch>", "patch the file with patch_file.patch")
 
     def run(self, program, args):
-        if args < 2:
+        if len(args) < 2:
             print(f"Usage: {program} {self.name} {self.sign}")
             print("Not enough arguments were provided")
 
-        file_path, patch_file = args
+        file_path, *args = args
+        patch_file, *args = args
+        print(file_path, patch_file)
 
-        lines = read_file(file_path).splitlines()
+        lines = read_file(file_path)
+        patch = []
         flag = True
-        for row, line in enumerate(read_file(patch_file).splitlines()):
+        for (row, line) in enumerate(read_file(patch_file)):
+            print(f"{row} {line}")
             if len(line) == 0:
                 continue
 
@@ -164,12 +169,65 @@ class PatchSubcommand(Subcommand):
                 if action == ADD:
                     lines.insert(line_no, line)
                 elif action == REMOVE:
-                    lines.pop(line_no)
+                    if len(lines) != 0 and len(lines) - 1 >= line_no:
+                        lines.pop(line_no)
                 else:
                     assert False, "unreachable"
 
+            with open(file_path, 'w') as f:
+                for  line in lines:
+                    f.write(line)
+                    f.write('\n')
+
+class HelpSubcommand(Subcommand):
+    def __init__(self):
+        super().__init__("help", "subcommand", "print this help message")
+
+    def run(self, program, args):
+        if len(args) == 0:
+            print(f"not enough arguments were provided")
+            exit(1)
+
+        subcommand, *args = args
+        subcmd = find_subcmd(subcommand)
+        if subcmd is not None:
+            print(f"Usage: {program} {subcmd.name} {subcmd.sign}")
+            return 0
+
+        usage(program)
+        get_closest_cmd(subcommand)
+        return 1
+
+
+
+SUBCOMMANDS: List[Subcommand] = [
+    DiffSubcommand(),
+    PatchSubcommand(),
+    HelpSubcommand(),
+]
+
+def usage(program):
+    for subcmd in SUBCOMMANDS:
+        print(f"{subcmd.name} {subcmd.sign}")
+
+def find_subcmd(subcmd):
+    for cmd in SUBCOMMANDS:
+        if cmd.name == subcmd:
+            return cmd
+    return None
+
+def get_closest_cmd(subcmd):
+    cmd_list = [subcommand.name for subcommand in SUBCOMMANDS if len(lev_distance(subcmd, subcommand.name)) < 3]
+
+    if len(cmd_list) > 0:
+        print("did you meant: ")
+        for i in cmd_list:
+            print(f" {i}")
+
+
 def main():
     args = sys.argv
+    assert len(args) > 0
     if len(args) < 3:
         print(f"Usage: {args[0]}")
         print("not enough arguments were provided")
@@ -177,5 +235,15 @@ def main():
 
     current_program, subcommand, *args = args
 
+    subcmd = find_subcmd(subcommand)
+    if subcmd is not None:
+        return subcmd.run(current_program, args)
+
+    usage(current_program)
+    print(f"ERROR: unknown subcommand {subcommand}")
+    get_closest_cmd(subcommand)
+    return 1
+
+    
 if __name__ == "__main__":
     exit(main())
